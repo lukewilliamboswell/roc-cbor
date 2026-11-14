@@ -137,3 +137,12 @@ expect {
 	]
 	alternatives.all(|bytes| dec(bytes, { allow: [PaddedNumbers] }).is_ok() and dec(bytes, { forms: Encoder, allow: [PaddedNumbers] }) == Err(InvalidCbor(0)))
 }
+
+# Exact scalar forms take priority over ignored tags: preserve the encoder's decimal tag 4,
+# and refuse an extra tag rather than silently stripping it.
+expect dec(Cbor.encode(1.5.Dec), { forms: Encoder, ignore_tags: [4] }) == Ok(1.5)
+
+expect {
+	b = [0xc6].concat(Cbor.encode(1.5.Dec))
+	dec(b, { forms: Encoder, ignore_tags: [6] }) == Err(InvalidCbor(0)) and f32([0xc6, 0xf9, 0x3e, 0], { forms: Encoder, ignore_tags: [6] }) == Err(InvalidCbor(0))
+}

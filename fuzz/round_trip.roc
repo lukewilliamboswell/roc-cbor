@@ -328,7 +328,7 @@ test! = |g| {
 	items = count_items(bytes)
 	others : List(Cbor.Options)
 	others = [
-		{ forms: Encoder },
+		{ forms: Encoder, ignore_tags: [4] },
 		{ allow: [IntFromText, DecFromText, PaddedNumbers, BytesFromBase64] },
 		{ allow: Cbor.sql_rows },
 		{ duplicate_keys: First, unknown_fields: Reject },

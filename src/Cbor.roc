@@ -3064,7 +3064,7 @@ first_region = |regions, pos| {
 
 read_dec : Cbor, Cbor.Reader -> Try({ value : Dec, rest : Cbor.Reader }, [InvalidCbor(U64), MissingRequiredField(Str)])
 read_dec = |cbor, tagged| {
-	state = untag(cbor, tagged)?
+	state = if (cbor.read.encoder_forms) at_content(cbor, tagged)? else untag(cbor, tagged)?
 	h = head(state)?
 	match h.major {
 		0 => Ok({ value: Dec.from_attos(h.arg.to_i128() * dec_scale), rest: at(state, h.next) })

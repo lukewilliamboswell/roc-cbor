@@ -26,10 +26,10 @@ Features:
 
 | Item | Value |
 | --- | --- |
-| Version | 0.6.2 (section "Changes"; 0.6.0 has a migration table from 0.5) |
+| Version | 0.6.3 (section "Changes"; 0.6.0 has a migration table from 0.5) |
 | Module | `Cbor` (public), with nested types such as `Cbor.Value`, `Cbor.Raw`, `Cbor.Bytes`, `Cbor.Reader`, `Cbor.Writer`, and the stream types `Cbor.Items`, `Cbor.Entries`, `Cbor.ByteChunks`, `Cbor.TextChunks` and `Cbor.StreamWriter` |
 | Dependencies | none |
-| Compiler | the Zig compiler (nightlies of 2026-11-08 or later: the codec contract with format-owned errors). CI uses the nightly in `.roc-version` (`nightly-2026-11-13-03dce41`). The tests also pass on `nightly-2026-11-11-7679cc5`. |
+| Compiler | the Zig compiler (nightlies of 2026-11-08 or later: the codec contract with format-owned errors). CI and releases use `.roc-version` (`nightly-2026-11-14-a87808d`). |
 | Reader | Strict by default. Each lenient read is a `Cbor.Leniency` in the option `allow`. |
 | Writer | Always well-formed, preferred serialization (shortest heads and floats). Deterministic with `key_order: Sorted`. |
 | Streams | Read and write data larger than memory, one item, entry or chunk at a time (section "Streams") |
@@ -39,10 +39,10 @@ Features:
 ## Use
 
 Add the package to the header with its release URL. The release notes of each
-[release](https://github.com/Karakatiza666/roc-cbor/releases) give the URL. The latest release is 0.5.0.
+[release](https://github.com/lukewilliamboswell/roc-cbor/releases) give the URL. The latest release is 0.6.3.
 
 ```roc
-app [main!] { pf: platform "...", cbor: "https://github.com/Karakatiza666/roc-cbor/releases/download/0.5.0/B5U2mPsWTtuxfCRMzqQxio2ecDv7CAzCoyEMENMh4FNF.tar.zst" }
+app [main!] { pf: platform "...", cbor: "https://github.com/lukewilliamboswell/roc-cbor/releases/download/0.6.3/4SnyE6KLMCunE5uhtuT8cXjMGZFtw7EKvqmqNCrks4Wr.tar.zst" }
 
 import cbor.Cbor
 ```
@@ -74,7 +74,7 @@ A type that you define (`:=` or `::`) must opt in with `parser_for : _` and `enc
 | `Cbor.encode` | `a -> List(U8)` | Write one item. A derived encoder cannot fail. An `encoder_for` of your own with a wrong item count crashes here. |
 | `Cbor.encode_try` | `a -> Try(List(U8), [CountMismatch, ..err])` | Write one item. `Err(CountMismatch)` when an `encoder_for` of your own writes a wrong item count. |
 | `Cbor.encode_with` | `a, Cbor.WriteOptions -> Try(List(U8), [CountMismatch, DuplicateMapKey, ..err])` | Write with options (section "Write options") |
-| `Cbor.Options` | `{ fields ?: [Snake, Camel], allow ?: List(Cbor.Leniency), duplicate_keys ?: [Reject, First, Last], key_order ?: [Any, Sorted], unknown_fields ?: [Skip, Reject], max_depth ?: U64, max_items ?: U64, ignore_tags ?: List(U64), unions ?: Cbor.Unions, max_buffer ?: U64 }` | The options of the readers and of the stream decoders |
+| `Cbor.Options` | `{ fields ?: [Snake, Camel], allow ?: List(Cbor.Leniency), forms ?: [Compatible, Encoder], duplicate_keys ?: [Reject, First, Last], key_order ?: [Any, Sorted], unknown_fields ?: [Skip, Reject], max_depth ?: U64, max_items ?: U64, ignore_tags ?: List(U64), unions ?: Cbor.Unions, max_buffer ?: U64 }` | The options of the readers and of the stream decoders |
 | `Cbor.Leniency` | `[BoolFromInt, FloatToInt, IntFromText, DecFromText, NullAsAbsent, UndefinedAsNull, PaddedNumbers, BytesFromArray, BytesFromBase64, IndefiniteLength]` | One lenient read, for the option `allow` |
 | `Cbor.sql_rows` | `List(Cbor.Leniency)` | `[BoolFromInt, FloatToInt, NullAsAbsent, UndefinedAsNull, BytesFromArray]`: rows of a SQL database (section "SQL rows") |
 | `Cbor.WriteOptions` | `{ fields ?: [Snake, Camel], key_order ?: [Given, Sorted] }` | The options of `encode_with` |
@@ -131,6 +131,8 @@ own values. `examples/outside.roc` is a whole format.
 | `Cbor.Reader.new` | `List(U8), Cbor.Options -> Try({ cbor : Cbor, reader : Cbor.Reader }, Cbor.Error)` | Start a read. The checks of `parse_with` come first (the walk), and the bytes must be exactly one item. `cbor` and `reader` go to each `parse_*` method. |
 | `Cbor.Reader.finish` | `Cbor.Reader -> Try({}, Cbor.Error)` | End a read: `Ok` when the reader is at the end of the bytes, else `InvalidCbor` at the reader |
 | `Cbor.Writer.new` | `Cbor.WriteOptions -> Cbor.Writer` | Start a write of one root item. `fields` and `key_order` apply as in `encode_with`. |
+| `Cbor.Writer.open` | `Cbor.WriteOptions -> { cbor : Cbor, writer : Cbor.Writer }` | Start a write and get its format value for metadata methods, with the requested field naming |
+| `Cbor.Writer.finish_report` | `Cbor.Writer -> Try({ bytes : List(U8), max_depth : U64 }, [CountMismatch, DuplicateMapKey, ..err])` | The same checks, errors and bytes as `finish`, with the physical nesting depth |
 | `Cbor.Writer.finish` | `Cbor.Writer -> Try(List(U8), [CountMismatch, DuplicateMapKey, ..err])` | End a write: the bytes, with the checks and the sort of `encode_with` |
 | `Cbor.WriterWith(s)` | `{ writer : Cbor.Writer, state : s }` | A writer with a value of your own beside it |
 | `Cbor.ContainerWith(s)` | `{ container : Cbor.Container, state : s }` | A container with that value |
@@ -159,6 +161,26 @@ parsed.rest.reader.finish()?
 The counts are checked as in a derived encoder: a wrong count is `CountMismatch` at `finish`. A read needs nothing more:
 each `parse_*` method takes `Cbor` and `Cbor.Reader` and gives the reader after the item. A tag union reads with `peek`,
 `parse_str` and the `parse_dict_*` and `parse_tuple_*` methods.
+
+`Cbor.Writer.open(options)` also gives the `Cbor` for your format's `rename_field`, `missing_field` and
+`encode_key_str` methods, so writing needs no dummy read. Its `rename_field` uses the write option `fields`;
+a reader's `rename_field` deliberately keeps the Roc field name for missing-field errors.
+
+Use `finish_report` when the receiver has a depth limit:
+
+```roc
+opened = Cbor.Writer.open({ fields: Camel, key_order: Sorted })
+# Forward metadata with opened.cbor, and write the item with opened.writer.
+written = Cbor.encode_item(value, opened.writer)?
+report = written.finish_report()?
+# Send report.bytes only when report.max_depth <= the receiver's limit.
+```
+
+Arrays, maps and tags add a level, including empty containers, tag 4 plus its decimal array, and bignum tags 2/3.
+Byte strings and text add no level. A scalar has depth 0, an empty array depth 1, and `1.5.Dec` depth 2.
+The report is the smallest reader `max_depth` that accepts the bytes (with the other reader rules satisfied).
+With `Sorted`, reporting shares the map-sort structure walk. With `Given`, it adds one O(bytes) structure walk,
+without copying the output. Plain `finish` does not track depth.
 
 Write the methods of your format with a `match` that gives the error, not with `?`, where speed matters: an early return
 makes the compiler lose the inlining of the encoder (roc-lang/roc#13035, section "Known compiler issues"). A record of
@@ -196,6 +218,7 @@ A record in a `let` that is not the full record needs the annotation `opts : Cbo
 | --- | --- | --- |
 | `fields` | `Snake` | `Snake`: the field `user_id` reads the key `user_id`. `Camel`: it reads the key `userId`. A key of two fields (`a_1` and `a1`) is an error at the key. |
 | `allow` | `[]` | The lenient reads (table "Leniencies"). `[]` is strict. |
+| `forms` | `Compatible` | `Encoder`: typed `Dec`, `F32` and `F64` accept exactly their encoder's form. A derived list, including `List(U8)`, refuses a definite empty byte string (`40`); its encoder writes an empty array (`80`). `parse_bytes` and `Cbor.Bytes` still read `40`. See below. |
 | `duplicate_keys` | `Reject` | A key that is two times in one map. `Reject`: an error at the second key. `First`, `Last`: that instance is read, the others are skipped. One rule for each map: record, `Dict`, internal tag, `Cbor.Value`, skipped item. |
 | `key_order` | `Any` | `Any`: the keys of a map can be in any order. `Sorted`: the keys of each map must be in the order of RFC 8949 4.2.1, the order that `encode_with(value, { key_order: Sorted })` writes. A key before the key in front of it is an error at the key. Equal keys are next to each other, and `duplicate_keys` applies to them. The check is O(1) for each key: only the key before is kept. |
 | `unknown_fields` | `Skip` | A key of a map read as a record that is not a field. `Skip`: the entry is skipped (and checked). `Reject`: an error at the key. |
@@ -204,6 +227,15 @@ A record in a `let` that is not the full record needs the annotation `opts : Cbo
 | `ignore_tags` | `[]` | The tag numbers that the readers of the types skip before an item. With `[6]`, `c6 f6` reads as `null`. A map key does not skip tags. `peek`, `parse_cbor_tag`, `Cbor.Value` and `Cbor.Raw` see each tag. |
 | `unions` | `External` | The layout of each tag union of the parse (section "Tag unions") |
 | `max_buffer` | 16,777,216 (16 MiB) | Streams only (`Cbor.Items`, `Cbor.Entries`): the most bytes that a decoder keeps for one item, with the keys of a streamed map (section "Streams"). More is `Err(TooLarge(pos))`. `parse_with`, `parse_prefix`, `parse_sequence`, `ByteChunks` and `TextChunks` ignore it. |
+
+`forms: Encoder` leaves the default `Compatible` behavior available. For a `Dec`, it refuses floats, text (even with
+`DecFromText`), fractions for integers that fit major 0/1, non-normalized fractions and padded component heads.
+For `F32` and `F64`, it requires the shortest exact float width and canonical NaN (`f9 7e00`), refuses integer
+coercion and F64-to-F32 rounding, and preserves signed zero. The reader and writer share their form classifiers;
+checking allocates no encoded copy. An alternative form is `InvalidCbor` at the typed item's start.
+The option reaches `Cbor.Reader.new` and stream typed reads. Other types, dynamic `Cbor.Value`, skipped fields,
+and the rest of the profile retain their rules; this is not a whole-document canonicality check.
+
 
 #### Leniencies
 
@@ -239,6 +271,7 @@ expect Cbor.path_at(bytes, 12) == Ok([Index(0), Key("id")])
 
 `path_at` gives `Err(NotFound)` when no item starts at the position (a map key, or a position in the middle of an item), when the path goes through a map key that is not text, or when the bytes are not one well-formed item.
 It checks only well-formedness (any head width, indefinite lengths, duplicate keys, any depth), so it finds the position of an error of each `parse_with`. The path of the root item is `[]`.
+
 
 ### Write options
 
@@ -828,6 +861,18 @@ The model is the same as the model of `Json`. A peer that reads JSON sees the sa
 
 ## Changes
 
+### 0.6.3
+
+Encoder forms and writer reports (issues #3 and #4). Built and tested with `nightly-2026-11-14-a87808d` (the pin in `.roc-version`). Default reads and encoder bytes are unchanged.
+
+| Change | Detail |
+| --- | --- |
+| Typed forms | `Cbor.Options.forms ?: [Compatible, Encoder]`, default `Compatible`. `Encoder` checks typed decimals and floats against their encoder's form and refuses a definite empty byte string for an ordinary derived list. Shared float and decimal classifiers, no encoded comparison copy. |
+| Writer metadata | `Cbor.Writer.open` gives both the writer and its `Cbor`, using `WriteOptions.fields`. |
+| Writer depth | `Cbor.Writer.finish_report` gives `{ bytes, max_depth }`, with the checks and sort of `finish`. Counts physical arrays, maps and tags, including those added by scalar encoders. Shares the sorting walk; no extra output copy. |
+| Validation | `tests/forms.roc`, `tests/report.roc`, writer fixture parity through both finish paths, accepted-input re-encoding in `fuzz/round_trip.roc`, and the `report`, `report_sorted`, `report_bytes` and `report_memory` scale cases. |
+| API diff | `roc bump --old <0.6.2 bundle> src/main.roc --verbose` lists the optional `Options` field and both new writer methods. The compiler classifies the alias's added optional field as MAJOR (suggesting 0.7.0); the writer additions alone are MINOR. Version 0.6.3 retains compatible defaults. |
+
 ### 0.6.2
 
 A format of your own (roc-cbor#2): a format outside the package reads and writes through `Cbor.Reader` and `Cbor.Writer`, with state of its own beside them. No change to the bytes that are read and written, or to an existing signature. Built and tested with `nightly-2026-11-13-03dce41`.
@@ -1059,6 +1104,8 @@ Each fix of 0.5.0 has a regression test, and each test was checked against the c
 
 | Stream scale cases (`scripts/scale.sh`) | Checks |
 | --- | --- |
+| `report`, `report_sorted`, `report_bytes` | `Writer.finish_report` on lists of records with decimals (Given and Sorted), and a byte string: linear. |
+| `report_memory` | A held byte-string input of 16 MiB and 64 MiB: peak RSS must fit one input and one output plus 8 MiB. An extra copy of the output fails. |
 | `stream_items`, `stream_entries`, `stream_bytes`, `stream_text` | The push loops of `Items`, `Entries`, `ByteChunks`, `TextChunks`: linear in the item count or the size |
 | `stream_big_item` | One item of n records in 1 KiB chunks, with the `?` loop of section "Streams": linear (each byte of the open item is walked one time and appended in place) |
 | `stream_trap_reset`, `stream_trap_return` | The same item with the loop forms of the old single-use traps: a `match` on `rest` with `break` in its `Err` branch (which sets a new decoder) and `finish` after the loop; a function that gives the decoder back after its loop. Linear. |
@@ -1143,6 +1190,8 @@ Issue drafts for the rows with no issue wait for the maintainer. The repros of #
 | `tests/key_order.roc` | The read option `key_order: Sorted` |
 | `tests/stream.roc`, `tests/stream_entries.roc`, `tests/stream_chunks.roc`, `tests/stream_writer.roc` | The stream decoders `Items`, `Entries`, `ByteChunks`, `TextChunks`, and `StreamWriter` |
 | `tests/stream_adapters.roc` | An app: the adapters to the builtin `Stream` |
+| `tests/forms.roc` | Opt-in encoder forms for typed floats, decimals and empty lists, outside readers and streams |
+| `tests/report.roc` | Writer metadata and physical depth at 511, 512 and 513, scalar-added levels, errors and indefinite raw containers |
 | `tests/outside.roc` | A format of its own with state, through `Cbor.Reader.new`, `Cbor.Writer.new` and the `_carry` functions |
 | `tests/wasm_dev/` | The apps (`app.roc`, `entries.roc`), the expected checksums and the small platform of `scripts/wasm_dev.sh` |
 | `examples/round_trip.roc` | An app that uses each public item, reads a SQL row, reads a type over a tag, and reads tag unions of a peer. It runs on the echo host of roc, with no platform. |

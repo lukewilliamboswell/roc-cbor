@@ -25,9 +25,21 @@ hex = |s|
 ## The errors of each read in this file: a closed union, so that results compare with `==`.
 Errs : [InvalidCbor(U64), TooLarge(U64), NotStreamable, MissingRequiredField(Str)]
 
+## The error of the format: each parser of a type has it. A stream decoder adds its own errors.
+Fmt : [InvalidCbor(U64), MissingRequiredField(Str)]
+
+## A read of the format with the error in the union of the tests.
+wide : Try(a, Fmt) -> Try(a, Errs)
+wide = |r|
+	match r {
+		Ok(v) => Ok(v)
+		Err(InvalidCbor(p)) => Err(InvalidCbor(p))
+		Err(MissingRequiredField(name)) => Err(MissingRequiredField(name))
+	}
+
 ## The entries that `start` gives when it gets `chunks` one at a time with `push`, then `finish`. `end` is `Ok` after
 ## `finish`, else the error. The loop is bounded by the chunks.
-drive : Cbor.Entries, List(List(U8)) -> { entries : List((k, v)), end : Try({}, Errs) } where [k.Cbor.Parseable(Errs), k.Cbor.Encodable([]), v.Cbor.Parseable(Errs)]
+drive : Cbor.Entries, List(List(U8)) -> { entries : List((k, v)), end : Try({}, Errs) } where [k.Cbor.Parseable(Cbor.Error), k.Cbor.Encodable([]), v.Cbor.Parseable(Cbor.Error)]
 drive = |start, chunks| {
 	var $d = start
 	var $entries = []
@@ -57,17 +69,18 @@ drive = |start, chunks| {
 }
 
 ## The error of `finish` in the union of the tests.
-finished : Try({}, [InvalidCbor(U64), TooLarge(U64), NotStreamable]) -> Try({}, Errs)
+finished : Try({}, [InvalidCbor(U64), MissingRequiredField(Str), TooLarge(U64), NotStreamable]) -> Try({}, Errs)
 finished = |r|
 	match r {
 		Ok(_) => Ok({})
 		Err(InvalidCbor(p)) => Err(InvalidCbor(p))
+		Err(MissingRequiredField(f)) => Err(MissingRequiredField(f))
 		Err(TooLarge(p)) => Err(TooLarge(p))
 		Err(NotStreamable) => Err(NotStreamable)
 	}
 
 ## The result of `drive` as one `Try`: the entries, or the error.
-stream : Cbor.Entries, List(List(U8)) -> Try(List((k, v)), Errs) where [k.Cbor.Parseable(Errs), k.Cbor.Encodable([]), v.Cbor.Parseable(Errs)]
+stream : Cbor.Entries, List(List(U8)) -> Try(List((k, v)), Errs) where [k.Cbor.Parseable(Cbor.Error), k.Cbor.Encodable([]), v.Cbor.Parseable(Cbor.Error)]
 stream = |start, chunks| {
 	r = drive(start, chunks)
 	match r.end {
@@ -97,7 +110,7 @@ splits = |bytes| {
 }
 
 ## Each split of `bytes` given to `start` gives `want`.
-each_split : Cbor.Entries, List(U8), Try(List((k, v)), Errs) -> Bool where [k.Cbor.Parseable(Errs), k.Cbor.Encodable([]), v.Cbor.Parseable(Errs), k.is_eq : k, k -> Bool, v.is_eq : v, v -> Bool]
+each_split : Cbor.Entries, List(U8), Try(List((k, v)), Errs) -> Bool where [k.Cbor.Parseable(Cbor.Error), k.Cbor.Encodable([]), v.Cbor.Parseable(Cbor.Error), k.is_eq : k, k -> Bool, v.is_eq : v, v -> Bool]
 each_split = |start, bytes, want| {
 	var $all = Bool.True
 	for chunks in splits(bytes) {
@@ -112,7 +125,7 @@ each_split = |start, bytes, want| {
 
 ## `Entries.map` agrees with `parse_with` as a `Dict(k, v)` for each split of `bytes`. `read` is `parse_with` of one
 ## `Dict` type, as the list of its entries (a `Dict` cannot be parsed in a generic function).
-map_agrees : List(U8), Cbor.Options, (List(U8), Cbor.Options -> Try(List((k, v)), Errs)) -> Bool where [k.Cbor.Parseable(Errs), k.Cbor.Encodable([]), v.Cbor.Parseable(Errs), k.is_eq : k, k -> Bool, v.is_eq : v, v -> Bool]
+map_agrees : List(U8), Cbor.Options, (List(U8), Cbor.Options -> Try(List((k, v)), Errs)) -> Bool where [k.Cbor.Parseable(Cbor.Error), k.Cbor.Encodable([]), v.Cbor.Parseable(Cbor.Error), k.is_eq : k, k -> Bool, v.is_eq : v, v -> Bool]
 map_agrees = |bytes, options, read| each_split(Cbor.Entries.map(options), bytes, read(bytes, options))
 
 ## `each_split` with entries of the types Str and U64.
@@ -120,7 +133,7 @@ split_str_u64 : Cbor.Entries, List(U8), Try(List((Str, U64)), Errs) -> Bool
 split_str_u64 = |start, bytes, want| each_split(start, bytes, want)
 
 ## `map_agrees` for `bytes` and for each prefix of it (a cut input).
-prefixes_agree : List(U8), Cbor.Options, (List(U8), Cbor.Options -> Try(List((k, v)), Errs)) -> Bool where [k.Cbor.Parseable(Errs), k.Cbor.Encodable([]), v.Cbor.Parseable(Errs), k.is_eq : k, k -> Bool, v.is_eq : v, v -> Bool]
+prefixes_agree : List(U8), Cbor.Options, (List(U8), Cbor.Options -> Try(List((k, v)), Errs)) -> Bool where [k.Cbor.Parseable(Cbor.Error), k.Cbor.Encodable([]), v.Cbor.Parseable(Cbor.Error), k.is_eq : k, k -> Bool, v.is_eq : v, v -> Bool]
 prefixes_agree = |bytes, options, read| {
 	var $all = Bool.True
 	for n in 0..=bytes.len() {
@@ -135,42 +148,42 @@ prefixes_agree = |bytes, options, read| {
 str_u64 : List(U8), Cbor.Options -> Try(List((Str, U64)), Errs)
 str_u64 = |b, o| {
 	r : Try(Dict(Str, U64), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 u64_str : List(U8), Cbor.Options -> Try(List((U64, Str)), Errs)
 u64_str = |b, o| {
 	r : Try(Dict(U64, Str), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 u64_u64 : List(U8), Cbor.Options -> Try(List((U64, U64)), Errs)
 u64_u64 = |b, o| {
 	r : Try(Dict(U64, U64), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 f64_u64 : List(U8), Cbor.Options -> Try(List((F64, U64)), Errs)
 f64_u64 = |b, o| {
 	r : Try(Dict(F64, U64), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 bool_u64 : List(U8), Cbor.Options -> Try(List((Bool, U64)), Errs)
 bool_u64 = |b, o| {
 	r : Try(Dict(Bool, U64), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 str_value : List(U8), Cbor.Options -> Try(List((Str, Cbor.Value)), Errs)
 str_value = |b, o| {
 	r : Try(Dict(Str, Cbor.Value), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
@@ -179,14 +192,14 @@ Row : { id : U64, name : Str }
 str_row : List(U8), Cbor.Options -> Try(List((Str, Row)), Errs)
 str_row = |b, o| {
 	r : Try(Dict(Str, Row), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 str_dict : List(U8), Cbor.Options -> Try(List((Str, Dict(Str, U64))), Errs)
 str_dict = |b, o| {
 	r : Try(Dict(Str, Dict(Str, U64)), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
@@ -308,6 +321,8 @@ expect {
 ## An indefinite map with IndefiniteLength, each cut; without it, an error at the root head; a break in a
 ## definite map, or a break after a key, is an error.
 expect prefixes_agree(hex("bf616101616202ff"), indefinite, str_u64)
+
+## The indefinite map bf 61 61 01 61 62 02 ff with IndefiniteLength agrees with parse_with for the whole input and each cut.
 expect {
 	a : Try(List((Str, U64)), Errs)
 	a = stream(Cbor.Entries.map({}), [hex("bf616101ff")])
@@ -333,6 +348,8 @@ expect {
 
 ## ignore_tags: the tags before the root are skipped (each cut). A tag not in the list is an error at the tag.
 expect prefixes_agree(hex("c6d865a1616101"), { ignore_tags: [6, 101] }, str_u64)
+
+## c6 c7 a0 in two chunks with ignore_tags [6]: the unlisted tag 7 is an error at byte 1, the same as parse_with.
 expect {
 	a : Try(List((Str, U64)), Errs)
 	a = stream(Cbor.Entries.map({ ignore_tags: [6] }), [[0xc6], [0xc7, 0xa0]])
@@ -447,7 +464,7 @@ expect {
 	a : Try(List((Str, Cbor.Value)), Errs)
 	a = stream(Cbor.Entries.map(sorted_last), bytes.chunks_of(2))
 	want : Try(Cbor.Value, Errs)
-	want = Cbor.parse(hex("a1617802"))
+	want = wide(Cbor.parse(hex("a1617802")))
 	a.map_ok(|l| l.map(|(_, v)| Ok(v) == want)) == Ok([Bool.True, Bool.False]) and map_agrees(bytes, sorted_last, str_value)
 }
 
@@ -564,4 +581,13 @@ expect {
 	got : List((Str, List(U8)))
 	got = r.entries
 	got == [("a", List.repeat(7, 9000))] and r.end == Err(TooLarge(9008))
+}
+
+## A record value with no key for a field: `MissingRequiredField` in `rest`, as from `parse_with`. The parsers of the key
+## and the value give the error type of the format, and `push` adds `TooLarge` and `NotStreamable` to it (0.5.1).
+expect {
+	bytes = Cbor.encode(Dict.from_list([("a", { id: 1.U64 })]))
+	r : { values : List((Str, Row)), rest : Try(Cbor.Entries, Errs) }
+	r = Cbor.Entries.map({}).push(bytes)
+	r.values == [] and r.rest.map_ok(|_| {}) == Err(MissingRequiredField("name")) and str_row(bytes, {}) == Err(MissingRequiredField("name"))
 }

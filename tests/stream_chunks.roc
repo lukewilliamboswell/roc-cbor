@@ -26,6 +26,16 @@ hex = |s|
 ## The errors of each read in this file: a closed union, so that results compare with `==`.
 Errs : [InvalidCbor(U64)]
 
+## A read of the format as a `List(U8)` or a `Str`, with the error in the union of the tests: a byte string or a text
+## has no record fields, so no `MissingRequiredField`.
+narrow : Try(a, [InvalidCbor(U64), MissingRequiredField(Str)]) -> Try(a, Errs)
+narrow = |r|
+	match r {
+		Ok(v) => Ok(v)
+		Err(InvalidCbor(p)) => Err(InvalidCbor(p))
+		Err(MissingRequiredField(_)) => Err(InvalidCbor(U64.highest))
+	}
+
 ## An empty chunk of output: never given. A test that sees one gives this error.
 empty_piece : Errs
 empty_piece = InvalidCbor(999_999)
@@ -146,7 +156,7 @@ splits = |bytes| {
 bytes_agree : List(U8), Cbor.Options -> Bool
 bytes_agree = |bytes, options| {
 	want : Try(List(U8), Errs)
-	want = Cbor.parse_with(bytes, options)
+	want = narrow(Cbor.parse_with(bytes, options))
 	splits(bytes).all(|chunks| bytes_of(Cbor.ByteChunks.new(options), chunks) == want)
 }
 
@@ -154,7 +164,7 @@ bytes_agree = |bytes, options| {
 text_agrees : List(U8), Cbor.Options -> Bool
 text_agrees = |bytes, options| {
 	want : Try(Str, Errs)
-	want = Cbor.parse_with(bytes, options)
+	want = narrow(Cbor.parse_with(bytes, options))
 	splits(bytes).all(|chunks| text_of(Cbor.TextChunks.new(options), chunks) == want)
 }
 
@@ -322,10 +332,14 @@ expect {
 
 ## ignore_tags: the tags before the root are skipped, in each cut. A tag not in the list is an error at the tag.
 expect bytes_prefixes_agree(hex("c6d865420102"), { ignore_tags: [6, 101] }) and text_prefixes_agree(hex("c66161"), { ignore_tags: [6] })
+
+## An unlisted tag 7 after the skipped tag 6 (c6 c7 41 01) is an error at byte 1; tag 6 with no ignore_tags is an error at byte 0.
 expect bytes_give(hex("c6c74101"), { ignore_tags: [6] }, Err(InvalidCbor(1))) and bytes_give(hex("c64101"), {}, Err(InvalidCbor(0)))
 
 ## Bytes after the root: an error at the first extra byte, also when they come in a later chunk.
 expect bytes_give(hex("410000"), {}, Err(InvalidCbor(2))) and bytes_give(hex("5fff00"), indefinite, Err(InvalidCbor(2))) and text_gives(hex("616161"), {}, Err(InvalidCbor(2)))
+
+## The chunks 41 01, then an empty chunk, then 02: the part [1] comes, then an error at byte 2.
 expect {
 	r = drive_bytes(Cbor.ByteChunks.new({}), [hex("4101"), [], hex("02")])
 	r.pieces == [[1]] and r.end == Err(InvalidCbor(2))

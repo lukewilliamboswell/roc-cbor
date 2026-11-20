@@ -171,8 +171,8 @@ main! = |args| {
 	echo!("tags: id=${Str.inspect(tagged.map_ok(|t| t.id == id))} keys=${Str.inspect(keys.is_ok())} any=${Str.inspect(any)}\n")
 
 	# A peer with tags of its own: tag 6 before null is a null, tag 10 before text is a decimal.
-	# {"price": 10("4E+1"), "note": 6(null)}.
-	peer_row = [0xa2, 0x65, 0x70, 0x72, 0x69, 0x63, 0x65, 0xca, 0x64, 0x34, 0x45, 0x2b, 0x31, 0x64, 0x6e, 0x6f, 0x74, 0x65, 0xc6, 0xf6]
+	# {"price": 10("4E+1"), "note": 6(null)}. The args vary the exponent at runtime.
+	peer_row = [0xa2, 0x65, 0x70, 0x72, 0x69, 0x63, 0x65, 0xca, 0x64, 0x34, 0x45, 0x2b, 0x31 + (args.len() % 2).to_u8_wrap(), 0x64, 0x6e, 0x6f, 0x74, 0x65, 0xc6, 0xf6]
 	priced : Try({ price : Dec, note : Try(Str, [Null]) }, _)
 	priced = Cbor.parse_with(peer_row, { ignore_tags: [6, 10], allow: [DecFromText] })
 	match priced {

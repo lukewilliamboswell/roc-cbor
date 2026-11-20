@@ -29,7 +29,7 @@ Features:
 | Version | 0.6.3 (section "Changes"; 0.6.0 has a migration table from 0.5) |
 | Module | `Cbor` (public), with nested types such as `Cbor.Value`, `Cbor.Raw`, `Cbor.Bytes`, `Cbor.Reader`, `Cbor.Writer`, and the stream types `Cbor.Items`, `Cbor.Entries`, `Cbor.ByteChunks`, `Cbor.TextChunks` and `Cbor.StreamWriter` |
 | Dependencies | none |
-| Compiler | the Zig compiler (nightlies of 2026-11-08 or later: the codec contract with format-owned errors). CI and releases use `.roc-version` (`nightly-2026-11-19-54c51c9`). |
+| Compiler | The Zig compiler. CI uses `.roc-version` (`nightly-2026-11-19-54c51c9`). |
 | Reader | Strict by default. Each lenient read is a `Cbor.Leniency` in the option `allow`. |
 | Writer | Always well-formed, preferred serialization (shortest heads and floats). Deterministic with `key_order: Sorted`. |
 | Streams | Read and write data larger than memory, one item, entry or chunk at a time (section "Streams") |
@@ -863,6 +863,10 @@ The model is the same as the model of `Json`. A peer that reads JSON sees the sa
 | A `List(U8)` writes a byte string. A peer that needs an array of numbers needs `Cbor.U8Array`. | One form for bytes on write |
 
 ## Changes
+
+### Roc nightly 2026-11-19
+
+The compiler’s derived `Dict` parser calls `parse_dict_duplicate_key` when a decoded key compares equal to a key already in the dictionary. Cbor returns `InvalidCbor` at the end of that entry. The `duplicate_keys` option still handles equal CBOR keys before decoding.
 
 ### 0.6.3
 

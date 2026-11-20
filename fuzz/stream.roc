@@ -1,5 +1,5 @@
 app [target] {
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.1/GDoZFRDnzMRiVk9nE8wdWn52btGsM1GhcY9VDKqy9f1Y.tar.zst",
+	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.2/3kyiehxxzwAsjM23uCQGJ3Hx7dAAdzSGtK3k9Jq7Egtu.tar.zst",
 	pkg: "../src/main.roc",
 }
 
@@ -29,7 +29,28 @@ import pkg.Cbor
 Errs : [InvalidCbor(U64), TooLarge(U64), NotStreamable, MissingRequiredField(Str)]
 
 ## The errors of ByteChunks and TextChunks.
-ChunkErrs : Cbor.Error
+ChunkErrs : [InvalidCbor(U64)]
+
+## The error of the format: each parser of a type has it. A stream decoder adds its own errors.
+Fmt : [InvalidCbor(U64), MissingRequiredField(Str)]
+
+## A read of the format with the error in the union of the decoders.
+wide : Try(a, Fmt) -> Try(a, Errs)
+wide = |r|
+	match r {
+		Ok(v) => Ok(v)
+		Err(InvalidCbor(p)) => Err(InvalidCbor(p))
+		Err(MissingRequiredField(name)) => Err(MissingRequiredField(name))
+	}
+
+## A read of the format as a `List(U8)` or a `Str`: no record fields, so no `MissingRequiredField`.
+narrow : Try(a, Fmt) -> Try(a, ChunkErrs)
+narrow = |r|
+	match r {
+		Ok(v) => Ok(v)
+		Err(InvalidCbor(p)) => Err(InvalidCbor(p))
+		Err(MissingRequiredField(_)) => Err(InvalidCbor(U64.highest))
+	}
 
 ## The properties that run: all of them. A check of the target against a planted bug turns the others off.
 run : { p1 : Bool, p2 : Bool, p3 : Bool }
@@ -322,7 +343,7 @@ items_in = |bytes, set| {
 	while $lo < $hi {
 		mid = ($lo + $hi) // 2
 		r : Try(Cbor.Value, Errs)
-		r = Cbor.parse_with(bytes, to_options({ ..set, max_depth: U64.highest, max_items: mid }))
+		r = wide(Cbor.parse_with(bytes, to_options({ ..set, max_depth: U64.highest, max_items: mid })))
 		if r.is_ok() {
 			$hi = mid
 		} else {
@@ -336,7 +357,7 @@ items_in = |bytes, set| {
 walk_value : List(U8), U64, OptSet, U64, U64 -> Try({ value : Cbor.Value, end : U64, count : U64 }, Errs)
 walk_value = |bytes, at, set, depth, count| {
 	r : Try({ value : Cbor.Value, rest : List(U8) }, Errs)
-	r = Cbor.parse_prefix_with(bytes.drop_first(at), item_options(set, depth, count))
+	r = wide(Cbor.parse_prefix_with(bytes.drop_first(at), item_options(set, depth, count)))
 	match r {
 		Ok(one) => {
 			end = bytes.len() - one.rest.len()
@@ -351,7 +372,7 @@ walk_value = |bytes, at, set, depth, count| {
 typed_at : List(U8), U64, U64, OptSet, U64, U64 -> Try(a, Errs) where [a.Cbor.Parseable(Cbor.Error)]
 typed_at = |bytes, start, end, set, depth, count| {
 	r : Try({ value : a, rest : List(U8) }, Errs)
-	r = Cbor.parse_prefix_with(bytes.sublist({ start, len: end - start }), item_options(set, depth, count))
+	r = wide(Cbor.parse_prefix_with(bytes.sublist({ start, len: end - start }), item_options(set, depth, count)))
 	match r {
 		Ok(one) => Ok(one.value)
 		Err(InvalidCbor(p)) => Err(InvalidCbor(start + p))
@@ -572,7 +593,7 @@ check_items = |name, bytes, chunkings, set, read| {
 			crash "P2 Items.array does not agree with parse_with: ${name}"
 		}
 		whole_seq : Try(List(a), Errs)
-		whole_seq = Cbor.parse_sequence_with(bytes, options)
+		whole_seq = wide(Cbor.parse_sequence_with(bytes, options))
 		if whole_seq != seq {
 			crash "P2 Items.sequence does not agree with parse_sequence_with: ${name}"
 		}
@@ -632,7 +653,7 @@ check_chunks = |bytes, chunkings, set| {
 	# max_buffer does not apply to ByteChunks and TextChunks: the small buffer sets add nothing here.
 	if run.p2 and set.max_buffer > 1_000 {
 		want_data : Try(List(U8), ChunkErrs)
-		want_data = Cbor.parse_with(bytes, options)
+		want_data = narrow(Cbor.parse_with(bytes, options))
 		# A List(U8) also reads an empty array (and an array of bytes with BytesFromArray): ByteChunks reads only a byte string,
 		# and another root is an error at its head. With a byte string root, the same result and error position.
 		data_ok = if (root_major(bytes, set) == 2) want_data == data else data.is_err()
@@ -640,7 +661,7 @@ check_chunks = |bytes, chunkings, set| {
 			crash "P2 ByteChunks does not agree with parse_with of a List(U8)"
 		}
 		want_text : Try(Str, ChunkErrs)
-		want_text = Cbor.parse_with(bytes, options)
+		want_text = narrow(Cbor.parse_with(bytes, options))
 		# Another root (after the tags of ignore_tags) is an error at its head in TextChunks, and parse_with walks it first:
 		# then only both Err. With a text root, the same error position.
 		text_ok =
@@ -656,25 +677,25 @@ check_chunks = |bytes, chunkings, set| {
 
 ## `parse_with` of a List(a) for each item type: a List(a) cannot be parsed in a generic function.
 values : List(U8), Cbor.Options -> Try(List(Cbor.Value), Errs)
-values = |b, o| Cbor.parse_with(b, o)
+values = |b, o| wide(Cbor.parse_with(b, o))
 
 rows : List(U8), Cbor.Options -> Try(List(Row), Errs)
-rows = |b, o| Cbor.parse_with(b, o)
+rows = |b, o| wide(Cbor.parse_with(b, o))
 
 wides : List(U8), Cbor.Options -> Try(List(U128), Errs)
-wides = |b, o| Cbor.parse_with(b, o)
+wides = |b, o| wide(Cbor.parse_with(b, o))
 
 dicts : List(U8), Cbor.Options -> Try(List(Dict(U64, Str)), Errs)
-dicts = |b, o| Cbor.parse_with(b, o)
+dicts = |b, o| wide(Cbor.parse_with(b, o))
 
 shapes : List(U8), Cbor.Options -> Try(List(Shape), Errs)
-shapes = |b, o| Cbor.parse_with(b, o)
+shapes = |b, o| wide(Cbor.parse_with(b, o))
 
 text_keys : List(U8), Cbor.Options -> Try(Dict(Str, U64), Errs)
-text_keys = |b, o| Cbor.parse_with(b, o)
+text_keys = |b, o| wide(Cbor.parse_with(b, o))
 
 int_keys : List(U8), Cbor.Options -> Try(Dict(U64, Cbor.Value), Errs)
-int_keys = |b, o| Cbor.parse_with(b, o)
+int_keys = |b, o| wide(Cbor.parse_with(b, o))
 
 ## Each decoder and each item type with one option set.
 check_set : List(U8), List(List(List(U8))), OptSet -> {}

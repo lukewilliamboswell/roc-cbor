@@ -1,5 +1,5 @@
 app [target] {
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.1/GDoZFRDnzMRiVk9nE8wdWn52btGsM1GhcY9VDKqy9f1Y.tar.zst",
+	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.2/3kyiehxxzwAsjM23uCQGJ3Hx7dAAdzSGtK3k9Jq7Egtu.tar.zst",
 	pkg: "../src/main.roc",
 }
 
@@ -148,7 +148,7 @@ test! = |bytes| {
 	raw_row = Cbor.parse_with(bytes, tag_opts)
 	raw_last : Try(Cbor.Raw, _)
 	raw_last = Cbor.parse_with(bytes, last)
-	if raw_item.is_ok() != any.is_ok() or raw_item != Cbor.Raw.from_bytes(bytes) or raw_last.is_ok() != last_any.is_ok() {
+	if raw_item.is_ok() != any.is_ok() or raw_item != Cbor.Raw.from_bytes(bytes).map_err(|InvalidCbor(pos)| InvalidCbor(pos)) or raw_last.is_ok() != last_any.is_ok() {
 		crash "Cbor.Raw does not agree with Cbor.Value"
 	}
 	if raw_item.map_ok(|r| r.to_bytes() == bytes) == Ok(Bool.False) or raw_last.map_ok(|r| r.to_bytes() == bytes) == Ok(Bool.False) {

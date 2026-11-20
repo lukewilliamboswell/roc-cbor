@@ -7,7 +7,7 @@ import pkg.Cbor
 
 Row : { id : U64, name : Str }
 
-## A type of your own with a hand-written reader. Its error type is closed.
+## A type of your own with a hand-written reader. Its error type is the closed error type of the format.
 Id := U64.{
 	is_eq : _
 	encoder_for : _

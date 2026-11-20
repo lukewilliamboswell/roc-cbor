@@ -29,7 +29,7 @@ Features:
 | Version | 0.6.3 (section "Changes"; 0.6.0 has a migration table from 0.5) |
 | Module | `Cbor` (public), with nested types such as `Cbor.Value`, `Cbor.Raw`, `Cbor.Bytes`, `Cbor.Reader`, `Cbor.Writer`, and the stream types `Cbor.Items`, `Cbor.Entries`, `Cbor.ByteChunks`, `Cbor.TextChunks` and `Cbor.StreamWriter` |
 | Dependencies | none |
-| Compiler | the Zig compiler (nightlies of 2026-11-08 or later: the codec contract with format-owned errors). CI and releases use `.roc-version` (`nightly-2026-11-14-a87808d`). |
+| Compiler | the Zig compiler (nightlies of 2026-11-08 or later: the codec contract with format-owned errors). CI and releases use `.roc-version` (`nightly-2026-11-19-54c51c9`). |
 | Reader | Strict by default. Each lenient read is a `Cbor.Leniency` in the option `allow`. |
 | Writer | Always well-formed, preferred serialization (shortest heads and floats). Deterministic with `key_order: Sorted`. |
 | Streams | Read and write data larger than memory, one item, entry or chunk at a time (section "Streams") |
@@ -59,6 +59,8 @@ parsed = Cbor.parse(bytes)
 `Cbor.parse` takes its type from the context. Write the type in an annotation.
 `parse` gives `Err(InvalidCbor(pos))` when the bytes are not valid, not in the profile, or do not fit the type. `pos` is the byte position of the problem.
 It gives `Err(MissingRequiredField(name))` when a record field is absent. `name` is the Roc name of the field.
+The error type of the format is `[InvalidCbor(U64), MissingRequiredField(Str)]`, for each type. Each `parser_for` gives this error type,
+also a `parser_for` of your own (section "Building blocks"). A `match` on the result of a read has a branch for each of the two errors.
 A type that you define (`:=` or `::`) must opt in with `parser_for : _` and `encoder_for : _` (Roc langref, "Parsers").
 
 ### Read and write
@@ -205,6 +207,7 @@ read = |bytes|
 		Err(MissingRequiredField(field)) => Err("missing ${field}")
 		Err(InvalidCbor(pos)) => Err("invalid at ${pos.to_str()}")
 	}
+}
 ```
 
 `examples/round_trip.roc` uses each public item, except the stream types: `examples/stream.roc` uses those. `tests/aliases.roc` has generic helpers with `Readable` and `Writable`.
@@ -360,7 +363,7 @@ Tag numbers are in the [IANA registry](https://www.iana.org/assignments/cbor-tag
 Uuid := List(U8).{
 	is_eq : _
 
-	parser_for : Cbor -> (Cbor.Reader -> Try({ value : Uuid, rest : Cbor.Reader }, [InvalidCbor(U64)]))
+	parser_for : Cbor -> (Cbor.Reader -> Try({ value : Uuid, rest : Cbor.Reader }, [InvalidCbor(U64), MissingRequiredField(Str)]))
 	parser_for = |encoding| |state| {
 		tag = Cbor.parse_cbor_tag(encoding, state)?
 		bytes = Cbor.parse_bytes(encoding, tag.rest)?
@@ -863,7 +866,7 @@ The model is the same as the model of `Json`. A peer that reads JSON sees the sa
 
 ### 0.6.3
 
-Encoder forms and writer reports (issues #3 and #4). Built and tested with `nightly-2026-11-14-a87808d` (the pin in `.roc-version`). Default reads and encoder bytes are unchanged.
+Encoder forms and writer reports (issues #3 and #4). Built and tested with `nightly-2026-11-14-a87808d`. Default reads and encoder bytes are unchanged.
 
 | Change | Detail |
 | --- | --- |
@@ -919,6 +922,30 @@ The codec contract of the Roc compiler of 2026-11-08 and later: each format owns
 | A custom `parser_for` gives `[InvalidCbor(U64)]` | It gives `Cbor.Error` |
 | A `match` on the result of a read with `Err(_)` for other errors | A `match` on `InvalidCbor` and `MissingRequiredField` is complete |
 | A `match` on `finish` of `Cbor.Items` or `Cbor.Entries` | It also gives `MissingRequiredField` (from an item, as `push` does) |
+### 0.5.1
+
+A port to the derived parsers of the 11-14 nightly (`nightly-2026-11-14-a87808d`). In that compiler, the format owns the error type of a parse
+(roc-lang/roc `a192c58059`, `c4d9aba1a0`). The 11-07 nightly does not compile this release.
+
+| Change | Detail |
+| --- | --- |
+| Format error | Each reader of the codec protocol (`parse_str`, `parse_record_start`, `invalid_value`, ...) and each building block (`peek`, `parse_cbor_tag`, `parse_bytes`) gives `[InvalidCbor(U64), MissingRequiredField(Str)]`. Before, it gave `[InvalidCbor(U64)]`. |
+| `missing_field` | A new method of the codec protocol. The derived parser of a record calls it for an absent required field. It gives `MissingRequiredField(name)`, as before. |
+| `parse_tag_union` | Takes `Encoding.ParseTagUnionSpec(a, Cbor, Cbor.Reader, [InvalidCbor(U64), MissingRequiredField(Str)])`. The compiler type has 4 arguments now. |
+| Stream decoders | `Items.push`, `Items.from_stream`, `Entries.push` and `Entries.from_stream` take a type with `where [a.Cbor.Parseable([InvalidCbor(U64), MissingRequiredField(Str)])]`, and give that error with `TooLarge(U64)` (and `NotStreamable`, `Input(e)`). Before, the parser of the type had to give `TooLarge` too. |
+| `Cbor.Raw.from_bytes` | No change: it gives `[InvalidCbor(U64)]`. |
+| Warnings | The 11-14 compiler warns when a member of a nested type has the name of a top-level definition. The private writer function `finish` is now `finish_output`. `Cbor.StreamWriter.finish` and the other `finish` methods do not change. |
+| CI nightly | `.roc-version` is `nightly-2026-11-15-f25da45`. |
+| Fuzz | roc-fuzz 0.6.2 (0.4.3 does not link on nightlies from 2026-11-10, which make PIE executables). The input of a target is its raw bytes, and the target makes its value with the generator: roc-fuzz 0.6 saves an input in its own Binary format, which a type with the codec methods of Cbor cannot use. |
+| Tests | The tests use the error type of the format. New tests: `MissingRequiredField` from `Items.push` and `Entries.push`, and the closed error type of `Raw.from_bytes`. `tests/wasm_dev/run.mjs` gives the imports `roc_dbg` and `roc_expect_failed` of the 11-14 compiler. Workarounds for 2 compiler issues (section "Known compiler issues"). |
+
+| Your code in 0.5.0 | In 0.5.1 |
+| --- | --- |
+| A `parser_for` of your own with `[InvalidCbor(U64)]` | `[InvalidCbor(U64), MissingRequiredField(Str)]`. A domain error goes into `InvalidCbor(pos)`, for example with `Cbor.invalid_value`. |
+| `r : Try(Cbor.Value, [InvalidCbor(U64)])` and a `match` with only `InvalidCbor` | `Try(Cbor.Value, [InvalidCbor(U64), MissingRequiredField(Str)])`, or `_`, and a branch for `MissingRequiredField` |
+| A `Try` of a read with more errors (`[InvalidCbor(U64), TooLarge(U64), ..]`) | The read gives the error type of the format. Map it into the wider union. |
+| `where [a.Cbor.Parseable([InvalidCbor(U64), TooLarge(U64), ..errs])]` for `Items.push` | `where [a.Cbor.Parseable([InvalidCbor(U64), MissingRequiredField(Str)])]` |
+| `where [a.Cbor.Parseable([InvalidCbor(U64), ..errs])]`, `Readable(errs)` | No change in the form |
 
 ### 0.5.0
 
@@ -1086,7 +1113,7 @@ Each fix of 0.5.0 has a regression test, and each test was checked against the c
 
 | Script | Checks |
 | --- | --- |
-| `scripts/fuzz.sh [runs]` | The property tests with [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz) 0.6.1 (each target reads its input bytes as the entropy of its generators, as 0.4.3 did; the generated values hold `Cbor` encoders, so they have no derived roc-fuzz input format): a fixed count of inputs for each target in `fuzz/` (default 1,000,000, seed 1, inputs of 4,096 bytes or less, the tokens of `fuzz/cbor.dict`). Linux x86-64 and macOS arm64 only. A failure is saved in `.cache/fuzz/art-<target>/`. |
+| `scripts/fuzz.sh [runs]` | The property tests with [roc-fuzz](https://github.com/lukewilliamboswell/roc-fuzz) 0.6.2 (each target reads its input bytes as the entropy of its generators, as 0.4.3 did; the generated values hold `Cbor` encoders, so they have no derived roc-fuzz input format): a fixed count of inputs for each target in `fuzz/` (default 1,000,000, seed 1, inputs of 4,096 bytes or less, the tokens of `fuzz/cbor.dict`). Linux x86-64 and macOS arm64 only. A failure is saved in `.cache/fuzz/art-<target>/`. |
 | `scripts/scale.sh [runs]` | Complexity. Each case of `bench/scale.roc` (writer), `bench/scale_read.roc` (reader) and `bench/scale_stream.roc` (the `Stream` adapters) is its own app (`--opt=speed`), at 5k, 10k, 20k and 40k items. The time for each item must not grow more than 2.5x (n log n for a key sort, depth for the depth cases). It fails on 0.4.1 (internal unions), on a quadratic duplicate check, on a decoder that is kept and pushed again, on a walk of the open item from its start at each chunk, and on a linear scan of the keys of a streamed map. Table "Stream scale cases". |
 | `scripts/bench.sh [--check \| --update] [runs]` | Speed of `bench/bench.roc`: 0.4.1 against HEAD, or HEAD against `bench/baseline.txt` (each time divided by the time of a `calib` case; a case fails above 1.5x) |
 | `python3 bench/compare/run.py [--refresh]` | A diagnostic for development (`bench/compare/README.md`): the same fixtures read and written by roc-cbor and by CBOR libraries of other languages as reference points, to find slow paths and compiler issues. A local report: its results are not committed. |
@@ -1142,7 +1169,7 @@ The memory cases run under `ulimit -v` (512 MiB), so a memory bug is a FAIL row.
 | | `fuzz` | `scripts/fuzz.sh` on Linux x64. A failure uploads the inputs. |
 | | `scale` | `scripts/scale.sh 3` with 200,000 items. Blocks. |
 | | `differential` | `scripts/differential.sh` with `DIFF_STRICT=1` and `cbor2` 6.2.1. Blocks. |
-| | `bench` | `scripts/bench.sh --check 5`. Report only: a shared runner is not the baseline machine. |
+| | `bench` | `scripts/bench.sh --check 5` against `bench/baseline-ci.txt`, with the run correction (`BENCH_RUN_NORM=1`: each ratio is divided by the median ratio of the run, because runners differ in speed). A case fails above 1.3x. |
 | `.github/workflows/release.yml` (push of a tag `X.Y.Z` or `X.Y.Z-pre`) | | Runs the tests, makes the bundle and the docs, and publishes the GitHub Release with `<hash>.tar.zst` and `package-docs.tar.gz`. Then runs the examples against the published URL. |
 
 `.github/actions/setup-roc` downloads the nightly of `.roc-version` from `roc-lang/nightlies` with `gh release download`.
@@ -1152,6 +1179,8 @@ A tag has no `v`: roc reads the version from the URL, and the tag is a segment o
 
 | Issue | Effect | Workaround |
 | --- | --- | --- |
+| [roc-lang/roc#13101](https://github.com/roc-lang/roc/issues/13101) (the 11-14 nightly; not on `nightly-2026-11-07-ad3a5d2`) | In some programs, the method call `decoder.from_stream(source)` (also `Cbor.Items.array({}).from_stream(source)`) crashes the compiler: "eager procedure specialization request changed before final graph seal". `examples/stream.roc` is not affected. | The qualified call: `Cbor.Items.from_stream(decoder, source)` (`tests/stream_adapters.roc`, `tests/wasm_dev/app.roc`) |
+| [roc-lang/roc#13105](https://github.com/roc-lang/roc/issues/13105) (the 11-14 nightly; not on `nightly-2026-11-07-ad3a5d2`) | A `match` on the result of a read gives a false warning, "unmatchable pattern", on `Err(MissingRequiredField(_))`. It occurs with a `match` directly on `Cbor.parse(bytes)` in a function with `where [a.Cbor.Readable(errs)]`, and with `r : Try({ a : U64, b : U64 }, _)`. The branch matches at run time. A warning makes `roc check` and `roc test` exit with an error. | Annotate the result first. In a generic function: `r : Try(a, _)` (section "`where` aliases"). For a concrete type: the error type in full, `r : Try({ a : U64, b : U64 }, [InvalidCbor(U64), MissingRequiredField(Str)])`. |
 | [roc-lang/roc#12917](https://github.com/roc-lang/roc/issues/12917) (`nightly-2026-10-19-601b54c` to `nightly-2026-11-07-ad3a5d2`) | The drop of a value is recursive: dropping a `Cbor.Value` (or another recursive value) about 200,000 levels deep overflows the stack (fewer on arm64), also on an error path | The reader stops at `max_depth` (512). Do not build such values in app code. |
 | [roc-lang/roc#12919](https://github.com/roc-lang/roc/issues/12919) (`nightly-2026-10-19-601b54c` to `nightly-2026-11-07-ad3a5d2`) | A format with `encode_key_start` crashes the compiler (SIGSEGV) with a `Dict` key of a composite type. A tag union key then also needs `encode_key_str`. | The package has no `encode_key_start` and no `parse_key_start`: a composite key is a compile error |
 | [roc-lang/roc#13032](https://github.com/roc-lang/roc/issues/13032) (`nightly-2026-10-19-601b54c` to `nightly-2026-11-13-03dce41`) | A record that holds the output list, read after a callback, keeps a second reference to the list, so the next append copies it (an encode of n items is O(n^2)). On the dev backend, `match d.list { Pending(n) => .., _ => o }` on a destructured writer also copied the list. | The writer reads no field after a callback, and uses `if` there. `scripts/scale.sh` checks each writer shape. |

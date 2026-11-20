@@ -105,6 +105,7 @@ expect report({ a_1: 1.U64, a1: 2.U64 }, { fields: Camel }) == Err(DuplicateMapK
 
 # Sorted duplicate keys and CountMismatch retain finish's error precedence.
 Bad := [Count, Duplicate].{
+	is_eq : _
 	encoder_for : Cbor -> (Bad, Cbor.Writer -> Try(Cbor.Writer, err))
 	encoder_for = |_| |v, w| Cbor.encode_dict(
 		w,

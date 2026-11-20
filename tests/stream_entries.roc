@@ -25,6 +25,18 @@ hex = |s|
 ## The errors of each read in this file: a closed union, so that results compare with `==`.
 Errs : [InvalidCbor(U64), TooLarge(U64), NotStreamable, MissingRequiredField(Str)]
 
+## The error of the format: each parser of a type has it. A stream decoder adds its own errors.
+Fmt : [InvalidCbor(U64), MissingRequiredField(Str)]
+
+## A read of the format with the error in the union of the tests.
+wide : Try(a, Fmt) -> Try(a, Errs)
+wide = |r|
+	match r {
+		Ok(v) => Ok(v)
+		Err(InvalidCbor(p)) => Err(InvalidCbor(p))
+		Err(MissingRequiredField(name)) => Err(MissingRequiredField(name))
+	}
+
 ## The entries that `start` gives when it gets `chunks` one at a time with `push`, then `finish`. `end` is `Ok` after
 ## `finish`, else the error. The loop is bounded by the chunks.
 drive : Cbor.Entries, List(List(U8)) -> { entries : List((k, v)), end : Try({}, Errs) } where [k.Cbor.Parseable(Cbor.Error), k.Cbor.Encodable([]), v.Cbor.Parseable(Cbor.Error)]
@@ -136,42 +148,42 @@ prefixes_agree = |bytes, options, read| {
 str_u64 : List(U8), Cbor.Options -> Try(List((Str, U64)), Errs)
 str_u64 = |b, o| {
 	r : Try(Dict(Str, U64), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 u64_str : List(U8), Cbor.Options -> Try(List((U64, Str)), Errs)
 u64_str = |b, o| {
 	r : Try(Dict(U64, Str), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 u64_u64 : List(U8), Cbor.Options -> Try(List((U64, U64)), Errs)
 u64_u64 = |b, o| {
 	r : Try(Dict(U64, U64), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 f64_u64 : List(U8), Cbor.Options -> Try(List((F64, U64)), Errs)
 f64_u64 = |b, o| {
 	r : Try(Dict(F64, U64), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 bool_u64 : List(U8), Cbor.Options -> Try(List((Bool, U64)), Errs)
 bool_u64 = |b, o| {
 	r : Try(Dict(Bool, U64), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 str_value : List(U8), Cbor.Options -> Try(List((Str, Cbor.Value)), Errs)
 str_value = |b, o| {
 	r : Try(Dict(Str, Cbor.Value), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
@@ -180,14 +192,14 @@ Row : { id : U64, name : Str }
 str_row : List(U8), Cbor.Options -> Try(List((Str, Row)), Errs)
 str_row = |b, o| {
 	r : Try(Dict(Str, Row), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
 str_dict : List(U8), Cbor.Options -> Try(List((Str, Dict(Str, U64))), Errs)
 str_dict = |b, o| {
 	r : Try(Dict(Str, Dict(Str, U64)), Errs)
-	r = Cbor.parse_with(b, o)
+	r = wide(Cbor.parse_with(b, o))
 	r.map_ok(|d| d.to_list())
 }
 
@@ -452,7 +464,7 @@ expect {
 	a : Try(List((Str, Cbor.Value)), Errs)
 	a = stream(Cbor.Entries.map(sorted_last), bytes.chunks_of(2))
 	want : Try(Cbor.Value, Errs)
-	want = Cbor.parse(hex("a1617802"))
+	want = wide(Cbor.parse(hex("a1617802")))
 	a.map_ok(|l| l.map(|(_, v)| Ok(v) == want)) == Ok([Bool.True, Bool.False]) and map_agrees(bytes, sorted_last, str_value)
 }
 
@@ -569,4 +581,13 @@ expect {
 	got : List((Str, List(U8)))
 	got = r.entries
 	got == [("a", List.repeat(7, 9000))] and r.end == Err(TooLarge(9008))
+}
+
+## A record value with no key for a field: `MissingRequiredField` in `rest`, as from `parse_with`. The parsers of the key
+## and the value give the error type of the format, and `push` adds `TooLarge` and `NotStreamable` to it (0.5.1).
+expect {
+	bytes = Cbor.encode(Dict.from_list([("a", { id: 1.U64 })]))
+	r : { values : List((Str, Row)), rest : Try(Cbor.Entries, Errs) }
+	r = Cbor.Entries.map({}).push(bytes)
+	r.values == [] and r.rest.map_ok(|_| {}) == Err(MissingRequiredField("name")) and str_row(bytes, {}) == Err(MissingRequiredField("name"))
 }

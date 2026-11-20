@@ -377,7 +377,15 @@ expect Cbor.Raw.from_bytes(hex("0102")) == Err(InvalidCbor(1))
 ## Raw.from_bytes of a padded head (18 01) is an error at byte 0.
 expect Cbor.Raw.from_bytes(hex("1801")) == Err(InvalidCbor(0))
 
-## Raw.from_bytes of a map with the key "a" twice is an error at the second key, byte 4.
+## from_bytes keeps its closed error type in 0.5.1: a `Raw` has no record fields, so no `MissingRequiredField`.
+expect {
+	r : Try(Cbor.Raw, [InvalidCbor(U64)])
+	r = Cbor.Raw.from_bytes(hex("0102"))
+	match r {
+		Ok(_) => Bool.False
+		Err(InvalidCbor(p)) => p == 1
+	}
+}
 expect Cbor.Raw.from_bytes(hex("a2616101616102")) == Err(InvalidCbor(4))
 
 ## Raw.from_bytes of a cut array (82 01) is an error at byte 0.

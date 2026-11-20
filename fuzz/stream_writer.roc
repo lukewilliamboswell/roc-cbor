@@ -1,5 +1,5 @@
 app [target] {
-	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.1/GDoZFRDnzMRiVk9nE8wdWn52btGsM1GhcY9VDKqy9f1Y.tar.zst",
+	fuzz: platform "https://github.com/lukewilliamboswell/roc-fuzz/releases/download/0.6.2/3kyiehxxzwAsjM23uCQGJ3Hx7dAAdzSGtK3k9Jq7Egtu.tar.zst",
 	pkg: "../src/main.roc",
 }
 
@@ -400,8 +400,15 @@ rand_value = |s0, depth| {
 	}
 }
 
-test! : { seed : U64, values : List(Cbor.Value) } => Fuzz.Outcome
-test! = |g| {
+## roc-fuzz 0.6 saves an input in its own Binary format, which a value with the codec
+## methods of Cbor cannot use. So the input of the target is the raw bytes, and `generated`
+## makes the value from them with the generator.
+generated : List(U8) -> { seed : U64, values : List(Cbor.Value) }
+generated = |entropy| input(Arbitrary.new(entropy)).value
+
+test! : List(U8) => Fuzz.Outcome
+test! = |entropy| {
+	g = generated(entropy)
 	(extra, _) = rand_value(g.seed.bitwise_xor(4), 3)
 	(other, _) = rand_value(g.seed.bitwise_xor(5), 3)
 	values = g.values.concat([extra, other])

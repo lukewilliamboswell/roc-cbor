@@ -143,7 +143,8 @@ expect {
 	ok = Cbor.parse(rec_bytes)
 	var $typed = []
 	for n in 0..<rec_bytes.len() {
-		r : Try({ a : U64, bc : List(Bool) }, _)
+		# The error type in full: with `_`, the 11-14 compiler gives a false warning (unmatchable pattern) on `MissingRequiredField` (roc-lang/roc#13105).
+		r : Try({ a : U64, bc : List(Bool) }, [InvalidCbor(U64), MissingRequiredField(Str)])
 		r = Cbor.parse(rec_bytes.take_first(n))
 		p =
 			match r {

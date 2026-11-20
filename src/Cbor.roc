@@ -773,8 +773,14 @@ Cbor :: {
 		to_hash : _
 
 		## A `Raw` of `bytes`: they must be one item with the strict checks of `Cbor.parse`.
-		from_bytes : List(U8) -> Try(Cbor.Raw, [InvalidCbor(U64), MissingRequiredField(Str)])
-		from_bytes = |bytes| Cbor.parse(bytes)
+		from_bytes : List(U8) -> Try(Cbor.Raw, [InvalidCbor(U64)])
+		from_bytes = |bytes|
+			# The format error has `MissingRequiredField` too, but a `Raw` has no record fields.
+			match Cbor.parse(bytes) {
+				Ok(raw) => Ok(raw)
+				Err(InvalidCbor(pos)) => Err(InvalidCbor(pos))
+				Err(MissingRequiredField(_)) => Err(InvalidCbor(0))
+			}
 
 		## The bytes of the item.
 		to_bytes : Cbor.Raw -> List(U8)
@@ -1014,7 +1020,7 @@ Cbor :: {
 		push = |items, chunk| {
 			Shape : a
 			parse_shape = Shape.parser_for(items.cbor)
-			push_items(items, chunk, parse_shape, |p| TooLarge(p))
+			push_items(items, chunk, widen_parser(parse_shape), |p| TooLarge(p))
 		}
 
 		## The end of the input: `Ok({})` when the root array, or the last item of the sequence, ended at the last byte.
@@ -1045,7 +1051,12 @@ Cbor :: {
 				start,
 				source,
 				{
-					push_error: |e| e,
+					push_error: |e|
+						match e {
+							InvalidCbor(p) => InvalidCbor(p)
+							MissingRequiredField(name) => MissingRequiredField(name)
+							TooLarge(p) => TooLarge(p)
+						},
 					finish_error: |e|
 						match e {
 							InvalidCbor(p) => InvalidCbor(p)
@@ -1117,8 +1128,8 @@ Cbor :: {
 		push = |entries, chunk| {
 			KeyShape : k
 			ValueShape : v
-			key_shape = KeyShape.parser_for(entries.items.cbor)
-			value_shape = ValueShape.parser_for(entries.items.cbor)
+			key_shape = widen_parser(KeyShape.parser_for(entries.items.cbor))
+			value_shape = widen_parser(ValueShape.parser_for(entries.items.cbor))
 			dups = key_dups(entries.items.rules)
 			push_entries(entries, chunk, |state| exact_key_with(state, key_shape, dups), value_shape)
 		}
@@ -1141,7 +1152,13 @@ Cbor :: {
 				start,
 				source,
 				{
-					push_error: |e| e,
+					push_error: |e|
+						match e {
+							InvalidCbor(p) => InvalidCbor(p)
+							MissingRequiredField(name) => MissingRequiredField(name)
+							TooLarge(p) => TooLarge(p)
+							NotStreamable => NotStreamable
+						},
 					finish_error: |e|
 						match e {
 							InvalidCbor(p) => InvalidCbor(p)
@@ -1314,6 +1331,10 @@ Cbor :: {
 	## uses it for its own errors: `Err(Cbor.invalid_value(encoding, state))` is an error at `state`.
 	invalid_value : Cbor, Cbor.Reader -> [InvalidCbor(U64), MissingRequiredField(Str)]
 	invalid_value = |_, state| InvalidCbor(error_pos(state))
+
+	## Codec protocol: the error for a required record field with no key. `name` is the Roc name of the field.
+	missing_field : Cbor, Str -> [InvalidCbor(U64), MissingRequiredField(Str)]
+	missing_field = |_, name| MissingRequiredField(name)
 
 	# Building blocks for a `parser_for` or an `encoder_for` of your own
 
@@ -1915,11 +1936,6 @@ Cbor :: {
 	## `External` (default): text for a tag with no payload, else a map of one entry: the tag, then its payload,
 	## or an array of its payloads when it has more than one. The same shapes as `Json`.
 	## `Internal({ tag, content })`: text, or a map with the tag name at the key `tag` (see `Cbor.Unions`).
-	## Codec protocol: the derived `parser_for` of a record calls it when a required field is absent.
-	## The error names the Roc field.
-	missing_field : Cbor, Str -> [InvalidCbor(U64), MissingRequiredField(Str)]
-	missing_field = |_, name| MissingRequiredField(name)
-
 	parse_tag_union : Cbor, Encoding.ParseTagUnionSpec(a, Cbor, Cbor.Reader, [InvalidCbor(U64), MissingRequiredField(Str)]), Cbor.Reader -> Try({ value : a, rest : Cbor.Reader }, [InvalidCbor(U64), MissingRequiredField(Str)])
 	parse_tag_union = |encoding, spec, tagged| {
 		state = untag(encoding, tagged)?
@@ -2672,6 +2688,25 @@ counts_match : Cbor.Writer -> Bool
 counts_match = |w| !w.st.bad and !w.st.owe and w.st.level == 0
 
 ## The output with the gaps of old record heads removed: one pass, in place.
+##
+## TODO(build time): this sort gives every program that calls `Cbor.encode`
+## a second copy of the builtin sort, for `{ at : U64, len : U64 }`. All the
+## other sorts of this module sort `U64` values or indexes (`dedup_entries`,
+## `dup_keys`, `sort_maps`, `first_duplicate`, `walk`), and share one copy.
+## In an optimised (`--opt=speed`) build of an 8-query roc-reify-surrealdb
+## probe (nightly-reify-2026-11-15-ee91030), the two copies are about
+## 84,000 of the 191,000 LLVM instructions of the program; `quad_swap`
+## alone is 11,000 to 18,000 per copy. How much build time the second copy
+## costs is not measured. Possible fixes, each to measure first:
+## - Sort `U64` indexes into `gaps` by `at`, as the other sorts do, so that
+##   the `U64` copy is used.
+## - Keep `gaps` in order of `at` as `shorten_head` adds them, and do not
+##   sort. A record closes after the records in it, so a new gap goes in
+##   before the gaps of the records in it: search from the end.
+## - Merge the gaps in one pass with no general sort: each gap belongs to
+##   one record, and records nest.
+## The output must stay the same bytes: the round-trip, differential and
+## fuzz tests check this.
 finish_output : Cbor.Writer -> List(U8)
 finish_output = |w| {
 	{ out, st } = w
@@ -5844,6 +5879,15 @@ push_items = |items, chunk, parse_shape, too_large| {
 		Err(e) => { values: $values, rest: Err(e) }
 	}
 }
+
+## The reader of a type, with the error of the format in a union with more tags (the errors of a stream decoder).
+widen_parser : (Cbor.Reader -> Try({ value : a, rest : Cbor.Reader }, [InvalidCbor(U64), MissingRequiredField(Str)])) -> (Cbor.Reader -> Try({ value : a, rest : Cbor.Reader }, [InvalidCbor(U64), MissingRequiredField(Str), ..e]))
+widen_parser = |parse| |state|
+	match parse(state) {
+		Ok(r) => Ok(r)
+		Err(InvalidCbor(p)) => Err(InvalidCbor(p))
+		Err(MissingRequiredField(name)) => Err(MissingRequiredField(name))
+	}
 
 ## A reader that reads no value: for `finish`, which needs no type. After `push`, no item of the bytes is whole, so
 ## the end of the input gives `End` or the error of the cut item before a reader runs.
